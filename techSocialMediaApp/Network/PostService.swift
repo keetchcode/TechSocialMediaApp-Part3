@@ -14,9 +14,10 @@ class PostService {
   enum PostServiceError: Error {
     case invalidURL
     case unauthorized
-    case serverError
+    case serverError(statusCode: Int)
     case decodingError
   }
+
   // MARK: - ✅ 1. GET /posts (All Posts with Pagination)
   func getPosts(pageNumber: Int = 0) async throws -> [Post] {
     guard let userSecret = KeychainService.shared.get("userSecret") else {
@@ -37,7 +38,7 @@ class PostService {
     do {
       let (data, response) = try await URLSession.shared.data(for: request)
       guard let httpResponse = response as? HTTPURLResponse else {
-        throw PostServiceError.serverError
+        throw PostServiceError.serverError(statusCode: 500)
       }
 
       print("📡 HTTP Status Code: \(httpResponse.statusCode)")
@@ -54,79 +55,26 @@ class PostService {
 
         do {
           let posts = try decoder.decode([Post].self, from: data)
-
-          // ✅ Sorting posts by `createdDate` (newest first)
           let sortedPosts = posts.sorted(by: { $0.createdDate > $1.createdDate })
           print("✅ Successfully fetched \(sortedPosts.count) posts")
 
           return sortedPosts
-
         } catch let decodingError {
           print("❌ JSON Decoding Error: \(decodingError.localizedDescription)")
           throw PostServiceError.decodingError
         }
 
-      case 400:
-        print("❌ Bad Request: Missing userSecret")
-        throw PostServiceError.unauthorized
-
-      case 401, 403:
-        print("❌ Unauthorized access: Invalid userSecret")
-        throw PostServiceError.unauthorized
-
       default:
         print("❌ Server error: Status \(httpResponse.statusCode)")
-        throw PostServiceError.serverError
+        throw PostServiceError.serverError(statusCode: httpResponse.statusCode)
       }
-    } catch let error as URLError {
-      print("❌ Network Error: \(error.localizedDescription)")
-      throw PostServiceError.serverError
     } catch {
       print("❌ Unexpected Error: \(error.localizedDescription)")
-      throw PostServiceError.serverError
+      throw PostServiceError.serverError(statusCode: 500)
     }
   }
 
-  func toggleLike(postID: Int, userLiked: Bool) async throws -> Post {
-      guard let userSecret = KeychainService.shared.get("userSecret") else {
-          throw PostServiceError.unauthorized
-      }
-
-      guard let url = URL(string: APIEndpoints.updateLikes) else {
-          throw PostServiceError.invalidURL
-      }
-
-      var request = URLRequest(url: url)
-      request.httpMethod = "POST"
-      request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-      let requestBody: [String: Any] = [
-          "userSecret": userSecret,
-          "postid": postID
-      ]
-      request.httpBody = try JSONSerialization.data(withJSONObject: requestBody, options: .fragmentsAllowed)
-
-      let (data, response) = try await URLSession.shared.data(for: request)
-      guard let httpResponse = response as? HTTPURLResponse else {
-          throw PostServiceError.serverError
-      }
-
-      print("📡 HTTP Status Code: \(httpResponse.statusCode)")
-
-      switch httpResponse.statusCode {
-      case 200, 201:
-          let updatedPost = try JSONDecoder().decode(Post.self, from: data)
-          print("✅ Like updated. Post \(postID) now has \(updatedPost.likes) likes.")
-          return updatedPost
-      case 400:
-          print("❌ Bad Request: Invalid like request.")
-          throw PostServiceError.serverError
-      default:
-          throw PostServiceError.serverError
-      }
-  }
-
-  // MARK: - ✅ 2. POST /createPost (Create New Post)
+  // MARK: - ✅ 2. CREATE POST
   func createPost(title: String, body: String) async throws -> Post {
     guard let userSecret = KeychainService.shared.get("userSecret") else {
       throw PostServiceError.unauthorized
@@ -140,7 +88,6 @@ class PostService {
     request.httpMethod = "POST"
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-    // Required body parameters
     let requestBody: [String: Any] = [
       "userSecret": userSecret,
       "post": [
@@ -153,7 +100,7 @@ class PostService {
 
     let (data, response) = try await URLSession.shared.data(for: request)
     guard let httpResponse = response as? HTTPURLResponse else {
-      throw PostServiceError.serverError
+      throw PostServiceError.serverError(statusCode: 500)
     }
 
     print("📡 HTTP Status Code: \(httpResponse.statusCode)")
@@ -163,16 +110,47 @@ class PostService {
       let createdPost = try JSONDecoder().decode(Post.self, from: data)
       print("✅ Post Created: \(createdPost.title)")
       return createdPost
-    case 400:
-      print("❌ Bad Request: Missing userSecret")
-      throw PostServiceError.unauthorized
     default:
-      throw PostServiceError.serverError
+      throw PostServiceError.serverError(statusCode: httpResponse.statusCode)
     }
   }
 
-  // MARK: - ✅ 3. DELETE /post (Delete a Post by ID)
-  func deletePost(postID: Int) async throws -> Bool {
+  // MARK: - ✅ 3. TOGGLE LIKE
+  func toggleLike(postID: Int, userLiked: Bool) async throws -> Post {
+    guard let userSecret = KeychainService.shared.get("userSecret") else {
+      throw PostServiceError.unauthorized
+    }
+
+    guard let url = URL(string: APIEndpoints.updateLikes) else {
+      throw PostServiceError.invalidURL
+    }
+
+    var request = URLRequest(url: url)
+    request.httpMethod = "POST"
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+    let requestBody: [String: Any] = [
+      "userSecret": userSecret,
+      "postid": postID,
+      "userLiked": userLiked // ✅ Ensure this is sent to API
+    ]
+    request.httpBody = try JSONSerialization.data(withJSONObject: requestBody, options: .fragmentsAllowed)
+
+    let (data, response) = try await URLSession.shared.data(for: request)
+    guard let httpResponse = response as? HTTPURLResponse else {
+      throw PostServiceError.serverError(statusCode: 500)
+    }
+
+    switch httpResponse.statusCode {
+    case 200, 201:
+      return try JSONDecoder().decode(Post.self, from: data)
+    default:
+      throw PostServiceError.serverError(statusCode: httpResponse.statusCode)
+    }
+  }
+
+  // MARK: - ✅ 4. DELETE POST
+  func deletePost(postID: Int) async throws {
     guard let userSecret = KeychainService.shared.get("userSecret") else {
       throw PostServiceError.unauthorized
     }
@@ -183,23 +161,90 @@ class PostService {
 
     var request = URLRequest(url: url)
     request.httpMethod = "DELETE"
-    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
     let (_, response) = try await URLSession.shared.data(for: request)
     guard let httpResponse = response as? HTTPURLResponse else {
-      throw PostServiceError.serverError
+      throw PostServiceError.serverError(statusCode: 500)
+    }
+
+    if httpResponse.statusCode == 200 {
+      print("✅ Post Deleted Successfully")
+    } else {
+      throw PostServiceError.serverError(statusCode: httpResponse.statusCode)
+    }
+  }
+
+  // MARK: - ✅ CREATE COMMENT (Fixed)
+  func createComment(for postID: Int, comment: String) async throws {
+    guard let userSecret = KeychainService.shared.get("userSecret") else {
+      throw PostServiceError.unauthorized
+    }
+
+    guard let url = URL(string: APIEndpoints.createComment) else {
+      throw PostServiceError.invalidURL
+    }
+
+    var request = URLRequest(url: url)
+    request.httpMethod = "POST"
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type") // ✅ Add required header
+
+    let requestBody: [String: Any] = [
+      "userSecret": userSecret,  // ✅ Correctly placed userSecret
+      "commentBody": comment,    // ✅ Correct key based on API docs
+      "postid": postID           // ✅ Correct key for post ID
+    ]
+
+    // ✅ Debugging: Print request JSON
+    if let jsonData = try? JSONSerialization.data(withJSONObject: requestBody, options: .prettyPrinted),
+       let jsonString = String(data: jsonData, encoding: .utf8) {
+      print("📤 Request JSON:\n\(jsonString)")
+    }
+
+    request.httpBody = try JSONSerialization.data(withJSONObject: requestBody, options: .fragmentsAllowed)
+
+    let (data, response) = try await URLSession.shared.data(for: request)
+    guard let httpResponse = response as? HTTPURLResponse else {
+      throw PostServiceError.serverError(statusCode: 500)
+    }
+
+    // ✅ Debugging: Print API Response
+    if let responseString = String(data: data, encoding: .utf8) {
+      print("📥 API Response Body: \(responseString)")
     }
 
     switch httpResponse.statusCode {
-    case 200:
-      print("✅ Post Deleted Successfully")
-      return true
+    case 200, 201:
+      print("✅ Comment successfully posted for postID: \(postID)")
     case 400:
-      print("❌ Bad Request: Missing or invalid userSecret")
+      print("❌ Error: Invalid userSecret (400)")
       throw PostServiceError.unauthorized
+    case 500:
+      print("❌ Server error (500) - Check API logs")
+      throw PostServiceError.serverError(statusCode: 500)
     default:
-      print("❌ Server error with status: \(httpResponse.statusCode)")
-      throw PostServiceError.serverError
+      print("❌ Unexpected error: \(httpResponse.statusCode)")
+      throw PostServiceError.serverError(statusCode: httpResponse.statusCode)
     }
+  }
+
+  // MARK: - ✅ 6. DELETE COMMENT
+  func deleteComment(commentID: Int) async throws {
+    guard let userSecret = KeychainService.shared.get("userSecret") else {
+      throw PostServiceError.unauthorized
+    }
+
+    guard let url = URL(string: "\(APIEndpoints.deleteComment)?userSecret=\(userSecret)&commentId=\(commentID)") else {
+      throw PostServiceError.invalidURL
+    }
+
+    var request = URLRequest(url: url)
+    request.httpMethod = "DELETE"
+
+    let (_, response) = try await URLSession.shared.data(for: request)
+    guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+      throw PostServiceError.serverError(statusCode: 500)
+    }
+
+    print("✅ Comment \(commentID) deleted successfully")
   }
 }
