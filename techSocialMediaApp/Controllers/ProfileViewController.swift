@@ -10,7 +10,6 @@ import UIKit
 class ProfileViewController: UIViewController {
 
   @IBOutlet weak var profileImageView: UIImageView!
-
   @IBOutlet weak var userNameLabel: UILabel!
   @IBOutlet weak var postCountLabel: UILabel!
   @IBOutlet weak var followerCountLabel: UILabel!
@@ -21,8 +20,8 @@ class ProfileViewController: UIViewController {
     super.viewDidLoad()
 
     setupNavigationBar()
+    setupProfileImageView()
 
-    // Light/Dark mode added
     view.backgroundColor = UIColor.systemBackground
     userNameLabel.textColor = UIColor.label
     postCountLabel.textColor = UIColor.secondaryLabel
@@ -31,6 +30,48 @@ class ProfileViewController: UIViewController {
     bioLabel.textColor = UIColor.secondaryLabel
   }
 
+  func loadUserProfile() {
+    print("📡 Attempting to fetch user profile...")
+
+    Task {
+      do {
+        let user = try await UserService().fetchUserProfile()
+        print("User data received: \(user)")
+        updateUI(with: user)
+      } catch {
+        print("Error fetching profile: \(error.localizedDescription)")
+      }
+    }
+  }
+
+  // Update UI with fetched data on the main thread
+  func updateUI(with user: User) {
+    DispatchQueue.main.async { // Ensure UI updates run on the main thread
+      print("Updating UI with user data...")
+
+      self.userNameLabel.text = user.userName
+      self.bioLabel.text = user.bio ?? "No bio available"
+      self.postCountLabel.text = "\(user.posts?.count ?? 0) Posts"
+      self.followerCountLabel.text = "\(user.followers ?? 0) Followers"
+      self.followingCountLabel.text = "\(user.following ?? 0) Following"
+
+      if let profileImageURL = user.profileImageUrl, let url = URL(string: profileImageURL) {
+        self.loadProfileImage(from: url)
+      } else {
+        self.profileImageView.image = UIImage(systemName: "person.circle.fill")
+      }
+    }
+  }
+
+  func loadProfileImage(from url: URL) {
+    DispatchQueue.global().async {
+      if let data = try? Data(contentsOf: url), let image = UIImage(data: data) {
+        DispatchQueue.main.async {
+          self.profileImageView.image = image
+        }
+      }
+    }
+  }
 
   func setupProfileImageView() {
     profileImageView.layer.cornerRadius = profileImageView.frame.size.width / 2
@@ -38,21 +79,6 @@ class ProfileViewController: UIViewController {
     profileImageView.contentMode = .scaleAspectFill
     profileImageView.layer.borderWidth = 2
     profileImageView.layer.borderColor = UIColor.lightGray.cgColor
-  }
-
-  func loadUserProfileImage() {
-    // Replace with actual image loading logic (from URL or local storage)
-    if let profileImageURL = URL(string: "https://example.com/profile.jpg") {
-      DispatchQueue.global().async {
-        if let imageData = try? Data(contentsOf: profileImageURL) {
-          DispatchQueue.main.async {
-            self.profileImageView.image = UIImage(data: imageData)
-          }
-        }
-      }
-    } else {
-      profileImageView.image = UIImage(systemName: "person.circle.fill") // Placeholder image
-    }
   }
 
   @IBAction func logoutButtonTapped(_ sender: UIButton) {
@@ -67,25 +93,20 @@ class ProfileViewController: UIViewController {
     let viewControllers = [authVC]
     self.navigationController?.setViewControllers(viewControllers, animated: true)
   }
-
+  
   func setupNavigationBar() {
-    // ✅ Create a UIBarButtonItem with SF Symbol "gearshape"
     let settingsButton = UIBarButtonItem(
-      image: UIImage(systemName: "gearshape"), // SF Symbol for settings
+      image: UIImage(systemName: "gearshape"),
       style: .plain,
       target: self,
       action: #selector(didTapSettings)
     )
-
-    // ✅ Set the button to the right side of the navigation bar
     navigationItem.rightBarButtonItem = settingsButton
   }
 
   @objc func didTapSettings() {
-    // ✅ Navigate to SettingsViewController
     let settingsVC = UIStoryboard(name: "Main", bundle: nil)
       .instantiateViewController(withIdentifier: "SettingsViewController") as! SettingsViewController
-
     navigationController?.pushViewController(settingsVC, animated: true)
   }
 }

@@ -7,16 +7,17 @@
 
 import Foundation
 
-struct Comment: Codable {
+struct Comment: Codable, Equatable, Hashable {
   let commentID: Int
   let body: String
   let userName: String
   let userID: UUID
   let createdDate: String
-  
-  /**
-   Custom Coding Keys to match API response.
-   */
+
+  static func == (lhs: Comment, rhs: Comment) -> Bool {
+    return lhs.commentID == rhs.commentID
+  }
+
   enum CodingKeys: String, CodingKey {
     case commentID = "commentId"
     case body
