@@ -20,6 +20,8 @@ class HomeViewController: UIViewController, UICollectionViewDelegate {
 
   private var dataSource: UICollectionViewDiffableDataSource<Section, Post>!
 
+  private let cactusLoader = CactusLoader()
+
   enum Section {
     case main
   }
@@ -30,6 +32,7 @@ class HomeViewController: UIViewController, UICollectionViewDelegate {
     setupCollectionView()
     setupFloatingButton()
     setupRefreshControl()
+    setupCactusLoader()
     fetchAllPosts()
   }
 
@@ -70,51 +73,69 @@ class HomeViewController: UIViewController, UICollectionViewDelegate {
     updateDataSource()
   }
 
-  // MARK: - ✅ Fetch All Posts (Until No More Available)
-  func fetchAllPosts() {
-    guard !isLoading, hasMorePosts else { return }
+  private func setupCactusLoader() {
+    cactusLoader.translatesAutoresizingMaskIntoConstraints = false
+    cactusLoader.isHidden = false // ✅ Ensure it's visible
+    view.addSubview(cactusLoader)
 
-    isLoading = true
-    print("📡 Fetching all posts from API...")
+    // ✅ Bring it to the front so it overlays everything
+    view.bringSubviewToFront(cactusLoader)
 
-    Task {
-      var allPosts: [Post] = []
-      var page = 0
-
-      while hasMorePosts { // ✅ Keep fetching until no more posts are left
-        do {
-          let fetchedPosts = try await PostService.shared.getPosts(pageNumber: page)
-
-          DispatchQueue.main.async {
-            if fetchedPosts.isEmpty {
-              self.hasMorePosts = false // ✅ No more pages left to fetch
-              print("✅ All posts loaded.")
-            } else {
-              let uniquePosts = fetchedPosts.filter { !self.loadedPostIDs.contains($0.postID) }
-              self.loadedPostIDs.formUnion(uniquePosts.map { $0.postID }) // ✅ Track loaded posts
-
-              if !uniquePosts.isEmpty {
-                allPosts.append(contentsOf: uniquePosts)
-                page += 1 // ✅ Move to the next page
-              }
-            }
-          }
-        } catch {
-          print("❌ Failed to fetch posts: \(error.localizedDescription)")
-          DispatchQueue.main.async { self.isLoading = false }
-          break
-        }
-      }
-
-      DispatchQueue.main.async {
-        self.posts = allPosts
-        self.posts.sort { $0.createdDate > $1.createdDate }
-        self.updateDataSource()
-        self.isLoading = false
-      }
-    }
+    NSLayoutConstraint.activate([
+      cactusLoader.widthAnchor.constraint(equalToConstant: 60),
+      cactusLoader.heightAnchor.constraint(equalToConstant: 70),
+      cactusLoader.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+      cactusLoader.centerYAnchor.constraint(equalTo: view.centerYAnchor)
+    ])
   }
 
+  func fetchAllPosts() {
+      guard !isLoading, hasMorePosts else { return }
+
+      isLoading = true
+      DispatchQueue.main.async {
+          self.cactusLoader.startAnimating() // ✅ Force UI update
+      }
+
+      Task {
+          var allPosts: [Post] = []
+          var page = 0
+
+          while hasMorePosts {
+              do {
+                  let fetchedPosts = try await PostService.shared.getPosts(pageNumber: page)
+                  DispatchQueue.main.async {
+                      if fetchedPosts.isEmpty {
+                          self.hasMorePosts = false
+                      } else {
+                          let uniquePosts = fetchedPosts.filter { !self.loadedPostIDs.contains($0.postID) }
+                          self.loadedPostIDs.formUnion(uniquePosts.map { $0.postID })
+
+                          if !uniquePosts.isEmpty {
+                              allPosts.append(contentsOf: uniquePosts)
+                              page += 1
+                          }
+                      }
+                  }
+              } catch {
+                  print("❌ Failed to fetch posts: \(error.localizedDescription)")
+                  DispatchQueue.main.async {
+                      self.isLoading = false
+                      self.cactusLoader.stopAnimating() // ✅ Stop animation on error
+                  }
+                  break
+              }
+          }
+
+          DispatchQueue.main.async {
+              self.posts = allPosts
+              self.posts.sort { $0.createdDate > $1.createdDate }
+              self.updateDataSource()
+              self.isLoading = false
+              self.cactusLoader.stopAnimating() // ✅ Stop animation when posts are loaded
+          }
+      }
+  }
   // MARK: - ✅ Detect Scrolling Near Bottom (Fetch More If Needed)
   func scrollViewDidScroll(_ scrollView: UIScrollView) {
     let offsetY = scrollView.contentOffset.y
@@ -173,22 +194,22 @@ class HomeViewController: UIViewController, UICollectionViewDelegate {
   }
 
   private func presentCommentModal(for post: Post) {
-      let storyboard = UIStoryboard(name: "Main", bundle: nil)
-      guard let commentVC = storyboard.instantiateViewController(withIdentifier: "CommentsViewController") as? CommentsViewController else {
-          print("❌ Failed to instantiate CommentsViewController")
-          return
-      }
+    let storyboard = UIStoryboard(name: "Main", bundle: nil)
+    guard let commentVC = storyboard.instantiateViewController(withIdentifier: "CommentsViewController") as? CommentsViewController else {
+      print("❌ Failed to instantiate CommentsViewController")
+      return
+    }
 
-      commentVC.postID = post.postID // ✅ Pass the post ID for fetching and posting comments
-      commentVC.modalPresentationStyle = .pageSheet // ✅ Make it a sheet (iOS 15+)
+    commentVC.postID = post.postID // ✅ Pass the post ID for fetching and posting comments
+    commentVC.modalPresentationStyle = .pageSheet // ✅ Make it a sheet (iOS 15+)
 
-      if let sheet = commentVC.sheetPresentationController {
-          sheet.detents = [.medium(), .large()] // ✅ Allows resizing
-          sheet.prefersGrabberVisible = true
-          sheet.prefersScrollingExpandsWhenScrolledToEdge = false
-      }
+    if let sheet = commentVC.sheetPresentationController {
+      sheet.detents = [.medium(), .large()] // ✅ Allows resizing
+      sheet.prefersGrabberVisible = true
+      sheet.prefersScrollingExpandsWhenScrolledToEdge = false
+    }
 
-      present(commentVC, animated: true)
+    present(commentVC, animated: true)
   }
 
   // MARK: - Setup Floating Button

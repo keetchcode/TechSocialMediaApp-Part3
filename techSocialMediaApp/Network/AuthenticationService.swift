@@ -8,6 +8,9 @@
 import Foundation
 
 class AuthenticationService {
+
+  static let shared = AuthenticationService()
+
   enum AuthError: Error, LocalizedError {
     case couldNotSignIn
     case invalidResponse
